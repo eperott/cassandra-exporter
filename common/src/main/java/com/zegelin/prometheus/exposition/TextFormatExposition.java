@@ -9,8 +9,6 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.buffer.Unpooled;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.handler.stream.ChunkedInput;
 
 import java.time.Instant;
 import java.util.Iterator;
@@ -20,7 +18,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
-public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
+public class TextFormatExposition implements FormattedExposition {
     private enum State {
         BANNER,
         METRIC_FAMILY,
@@ -58,7 +56,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             .addEscape('"', "\\\"")
             .toEscaper();
 
-    private static final ByteBuf BANNER = Resources.asByteBuf(TextFormatChunkedInput.class, "banner.txt");
+    private static final ByteBuf BANNER = Resources.asByteBuf(TextFormatExposition.class, "banner.txt");
 
     private final Iterator<MetricFamily> metricFamilyIterator;
 
@@ -75,7 +73,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
     private final Stopwatch stopwatch = Stopwatch.createUnstarted();
 
 
-    public TextFormatChunkedInput(final Stream<MetricFamily> metricFamilies, final Instant timestamp, final Labels globalLabels, final boolean includeHelp) {
+    public TextFormatExposition(final Stream<MetricFamily> metricFamilies, final Instant timestamp, final Labels globalLabels, final boolean includeHelp) {
         this.metricFamilyIterator = metricFamilies.iterator();
         this.timestamp = " " + Long.toString(timestamp.toEpochMilli());
         this.globalLabels = globalLabels;
@@ -83,13 +81,9 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
     }
 
     @Override
-    public boolean isEndOfInput() throws Exception {
+    public boolean isEndOfInput() {
         return state == State.EOF;
     }
-
-    @Override
-    public void close() throws Exception {}
-
 
     public static ByteBuf formatLabels(final Map<String, String> labels) {
         final StringBuilder stringBuilder = new StringBuilder();
@@ -297,7 +291,8 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
         }
     }
 
-    private void nextSlice(final ExpositionSink sink) throws Exception {
+    @Override
+    public void nextSlice(final ExpositionSink sink) {
         switch (state) {
             case BANNER:
                 stopwatch.start();
@@ -330,7 +325,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
                     return;
                 }
 
-                metricCount ++;
+                metricCount++;
 
                 return;
 
@@ -348,22 +343,5 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             default:
                 throw new IllegalStateException();
         }
-    }
-
-    @Override
-    public ByteBuf readChunk(final ChannelHandlerContext ctx) throws Exception {
-        final ByteBuf chunkBuffer = ctx.alloc().buffer(1024 * 1024 * 5);
-
-        // add slices till we hit the chunk size (or slightly over it), or hit EOF
-        while (chunkBuffer.readableBytes() < 1024 * 1024 && state != State.EOF) {
-            try {
-                nextSlice(new NettyExpositionSink(chunkBuffer));
-
-            } catch (Exception e) {
-                throw e;
-            }
-        }
-
-        return chunkBuffer;
     }
 }

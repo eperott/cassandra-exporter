@@ -2,8 +2,8 @@ package com.zegelin.prometheus.domain;
 
 import com.google.common.collect.ForwardingMap;
 import com.google.common.collect.ImmutableMap;
-import com.zegelin.prometheus.exposition.JsonFormatChunkedInput;
-import com.zegelin.prometheus.exposition.TextFormatChunkedInput;
+import com.zegelin.prometheus.exposition.JsonFormatExposition;
+import com.zegelin.prometheus.exposition.TextFormatExposition;
 import io.netty.buffer.ByteBuf;
 
 import java.util.Map;
@@ -16,8 +16,8 @@ public final class Labels extends ForwardingMap<String, String> {
     public Labels(final Map<String, String> labels) {
         this.labels = ImmutableMap.copyOf(labels);
         this.isEmpty = this.labels.isEmpty();
-        this.plainTextFormatUTF8EncodedByteBuf = TextFormatChunkedInput.formatLabels(labels);
-        this.jsonFormatUTF8EncodedByteBuf = JsonFormatChunkedInput.formatLabels(labels);
+        this.plainTextFormatUTF8EncodedByteBuf = TextFormatExposition.formatLabels(labels);
+        this.jsonFormatUTF8EncodedByteBuf = JsonFormatExposition.formatLabels(labels);
     }
 
     public static Labels of(final String key, final String value) {
