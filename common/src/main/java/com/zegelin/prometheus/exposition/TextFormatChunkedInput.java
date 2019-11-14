@@ -3,7 +3,6 @@ package com.zegelin.prometheus.exposition;
 import com.google.common.base.Stopwatch;
 import com.google.common.escape.CharEscaperBuilder;
 import com.google.common.escape.Escaper;
-import com.zegelin.netty.Floats;
 import com.zegelin.netty.Resources;
 import com.zegelin.prometheus.domain.*;
 import io.netty.buffer.ByteBuf;
@@ -43,8 +42,8 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             encoded = this.name().toLowerCase();
         }
 
-        void write(final ByteBuf buffer) {
-            ByteBufUtil.writeAscii(buffer, encoded);
+        void write(final ExpositionSink sink) {
+            sink.writeAscii(encoded);
         }
     }
 
@@ -118,71 +117,71 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
 
 
     class MetricFamilyWriter {
-        private final Consumer<ByteBuf> headerWriter;
-        private final Function<ByteBuf, Boolean> metricWriter;
+        private final Consumer<ExpositionSink> headerWriter;
+        private final Function<ExpositionSink, Boolean> metricWriter;
 
-        class HeaderVisitor implements MetricFamilyVisitor<Consumer<ByteBuf>> {
-            private void writeFamilyHeader(final MetricFamily metricFamily, final ByteBuf buffer, final MetricFamilyType type) {
-                buffer.writeByte('\n');
+        class HeaderVisitor implements MetricFamilyVisitor<Consumer<ExpositionSink>> {
+            private void writeFamilyHeader(final MetricFamily metricFamily, final ExpositionSink sink, final MetricFamilyType type) {
+                sink.writeByte('\n');
 
                 // # HELP <family name> <help>\n
                 if (includeHelp && metricFamily.help != null) {
-                    ByteBufUtil.writeAscii(buffer, "# HELP ");
-                    ByteBufUtil.writeAscii(buffer, metricFamily.name);
-                    buffer.writeByte(' ');
-                    ByteBufUtil.writeUtf8(buffer, HELP_STRING_ESCAPER.escape(metricFamily.help));
-                    buffer.writeByte('\n');
+                    sink.writeAscii("# HELP ");
+                    sink.writeAscii(metricFamily.name);
+                    sink.writeByte(' ');
+                    sink.writeUtf8(HELP_STRING_ESCAPER.escape(metricFamily.help));
+                    sink.writeByte('\n');
                 }
 
                 // # TYPE <family name> <type> \n
-                ByteBufUtil.writeAscii(buffer, "# TYPE ");
-                ByteBufUtil.writeAscii(buffer, metricFamily.name);
-                buffer.writeByte(' ');
-                type.write(buffer);
-                buffer.writeByte('\n');
+                sink.writeAscii("# TYPE ");
+                sink.writeAscii(metricFamily.name);
+                sink.writeByte(' ');
+                type.write(sink);
+                sink.writeByte('\n');
             }
 
-            private Consumer<ByteBuf> forType(final MetricFamily metricFamily, final MetricFamilyType type) {
+            private Consumer<ExpositionSink> forType(final MetricFamily metricFamily, final MetricFamilyType type) {
                 return (buffer) -> writeFamilyHeader(metricFamily, buffer, type);
             }
 
             @Override
-            public Consumer<ByteBuf> visit(final CounterMetricFamily metricFamily) {
+            public Consumer<ExpositionSink> visit(final CounterMetricFamily metricFamily) {
                 return forType(metricFamily, MetricFamilyType.COUNTER);
             }
 
             @Override
-            public Consumer<ByteBuf> visit(final GaugeMetricFamily metricFamily) {
+            public Consumer<ExpositionSink> visit(final GaugeMetricFamily metricFamily) {
                 return forType(metricFamily, MetricFamilyType.GAUGE);
             }
 
             @Override
-            public Consumer<ByteBuf> visit(final SummaryMetricFamily metricFamily) {
+            public Consumer<ExpositionSink> visit(final SummaryMetricFamily metricFamily) {
                 return forType(metricFamily, MetricFamilyType.SUMMARY);
             }
 
             @Override
-            public Consumer<ByteBuf> visit(final HistogramMetricFamily metricFamily) {
+            public Consumer<ExpositionSink> visit(final HistogramMetricFamily metricFamily) {
                 return forType(metricFamily, MetricFamilyType.HISTOGRAM);
             }
 
             @Override
-            public Consumer<ByteBuf> visit(final UntypedMetricFamily metricFamily) {
+            public Consumer<ExpositionSink> visit(final UntypedMetricFamily metricFamily) {
                 return forType(metricFamily, MetricFamilyType.UNTYPED);
             }
         }
 
-        class MetricVisitor implements MetricFamilyVisitor<Function<ByteBuf, Boolean>> {
-            private void writeLabels(final ByteBuf buffer, final Labels labels, final boolean commaPrefix) {
+        class MetricVisitor implements MetricFamilyVisitor<Function<ExpositionSink, Boolean>> {
+            private void writeLabels(final ExpositionSink sink, final Labels labels, final boolean commaPrefix) {
                 if (commaPrefix) {
-                    buffer.writeByte(',');
+                    sink.writeByte(',');
                 }
 
-                buffer.writeBytes(labels.asPlainTextFormatUTF8EncodedByteBuf().slice());
+                sink.writeBytes(labels.asPlainTextFormatUTF8EncodedByteBuf().nioBuffer());
             }
 
-            private void writeLabelSets(final ByteBuf buffer, final Labels... labelSets) {
-                buffer.writeByte('{');
+            private void writeLabelSets(final ExpositionSink sink, final Labels... labelSets) {
+                sink.writeByte('{');
 
                 boolean needsComma = false;
 
@@ -190,34 +189,34 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
                     if (labels == null || labels.isEmpty())
                         continue;
 
-                    writeLabels(buffer, labels, needsComma);
+                    writeLabels(sink, labels, needsComma);
 
                     needsComma = true;
                 }
 
                 if (!globalLabels.isEmpty()) {
-                    writeLabels(buffer, globalLabels, needsComma);
+                    writeLabels(sink, globalLabels, needsComma);
                 }
 
-                buffer.writeByte('}');
+                sink.writeByte('}');
             }
 
-            private void writeMetric(final ByteBuf buffer, final MetricFamily metricFamily, final String suffix, final float value, final Labels... labelSets) {
-                ByteBufUtil.writeAscii(buffer, metricFamily.name);
+            private void writeMetric(final ExpositionSink sink, final MetricFamily metricFamily, final String suffix, final float value, final Labels... labelSets) {
+                sink.writeAscii(metricFamily.name);
                 if (suffix != null) {
-                    ByteBufUtil.writeAscii(buffer, suffix);
+                    sink.writeAscii(suffix);
                 }
 
-                writeLabelSets(buffer, labelSets);
+                writeLabelSets(sink, labelSets);
 
-                buffer.writeByte(' ');
+                sink.writeByte(' ');
 
-                Floats.writeFloatString(buffer, value);
-                ByteBufUtil.writeAscii(buffer, timestamp); // timestamp already has a leading space
-                buffer.writeByte('\n');
+                sink.writeFloat(value);
+                sink.writeAscii(timestamp); // timestamp already has a leading space
+                sink.writeByte('\n');
             }
 
-            private <T extends Metric> Function<ByteBuf, Boolean> metricWriter(final MetricFamily<T> metricFamily, final BiConsumer<T, ByteBuf> writer) {
+            private <T extends Metric> Function<ExpositionSink, Boolean> metricWriter(final MetricFamily<T> metricFamily, final BiConsumer<T, ExpositionSink> writer) {
                 try {
                     final Iterator<T> metricIterator = metricFamily.metrics().iterator();
 
@@ -237,21 +236,21 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             }
 
             @Override
-            public Function<ByteBuf, Boolean> visit(final CounterMetricFamily metricFamily) {
+            public Function<ExpositionSink, Boolean> visit(final CounterMetricFamily metricFamily) {
                 return metricWriter(metricFamily, (counter, buffer) -> {
                     writeMetric(buffer, metricFamily, null, counter.value, counter.labels);
                 });
             }
 
             @Override
-            public Function<ByteBuf, Boolean> visit(final GaugeMetricFamily metricFamily) {
+            public Function<ExpositionSink, Boolean> visit(final GaugeMetricFamily metricFamily) {
                 return metricWriter(metricFamily, (gauge, buffer) -> {
                     writeMetric(buffer, metricFamily, null, gauge.value, gauge.labels);
                 });
             }
 
             @Override
-            public Function<ByteBuf, Boolean> visit(final SummaryMetricFamily metricFamily) {
+            public Function<ExpositionSink, Boolean> visit(final SummaryMetricFamily metricFamily) {
                 return metricWriter(metricFamily, (summary, buffer) -> {
                     writeMetric(buffer, metricFamily, "_sum", summary.sum, summary.labels);
                     writeMetric(buffer, metricFamily, "_count", summary.count, summary.labels);
@@ -263,7 +262,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             }
 
             @Override
-            public Function<ByteBuf, Boolean> visit(final HistogramMetricFamily metricFamily) {
+            public Function<ExpositionSink, Boolean> visit(final HistogramMetricFamily metricFamily) {
                 return metricWriter(metricFamily, (histogram, buffer) -> {
                     writeMetric(buffer, metricFamily, "_sum", histogram.sum, histogram.labels);
                     writeMetric(buffer, metricFamily, "_count", histogram.count, histogram.labels);
@@ -277,7 +276,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             }
 
             @Override
-            public Function<ByteBuf, Boolean> visit(final UntypedMetricFamily metricFamily) {
+            public Function<ExpositionSink, Boolean> visit(final UntypedMetricFamily metricFamily) {
                 return metricWriter(metricFamily, (untyped, buffer) -> {
                     writeMetric(buffer, metricFamily, null, untyped.value, untyped.labels);
                 });
@@ -289,21 +288,21 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
             this.metricWriter = metricFamily.accept(new MetricVisitor());
         }
 
-        void writeFamilyHeader(final ByteBuf buffer) {
-            this.headerWriter.accept(buffer);
+        void writeFamilyHeader(final ExpositionSink sink) {
+            this.headerWriter.accept(sink);
         }
 
-        boolean writeMetric(final ByteBuf buffer) {
-            return this.metricWriter.apply(buffer);
+        boolean writeMetric(final ExpositionSink sink) {
+            return this.metricWriter.apply(sink);
         }
     }
 
-    private void nextSlice(final ByteBuf chunkBuffer) throws Exception {
+    private void nextSlice(final ExpositionSink sink) throws Exception {
         switch (state) {
             case BANNER:
                 stopwatch.start();
 
-                chunkBuffer.writeBytes(BANNER.slice());
+                sink.writeBytes(BANNER.nioBuffer());
 
                 state = State.METRIC_FAMILY;
                 return;
@@ -320,13 +319,13 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
 
                 metricFamilyWriter = new MetricFamilyWriter(metricFamily);
 
-                metricFamilyWriter.writeFamilyHeader(chunkBuffer);
+                metricFamilyWriter.writeFamilyHeader(sink);
 
                 state = State.METRIC;
                 return;
 
             case METRIC:
-                if (!metricFamilyWriter.writeMetric(chunkBuffer)) {
+                if (!metricFamilyWriter.writeMetric(sink)) {
                     state = State.METRIC_FAMILY;
                     return;
                 }
@@ -337,8 +336,8 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
 
             case FOOTER:
                 stopwatch.stop();
-                ByteBufUtil.writeAscii(chunkBuffer, "\n\n# Thanks and come again!\n\n");
-                ByteBufUtil.writeAscii(chunkBuffer, String.format("# Wrote %s metrics for %s metric families in %s\n", metricCount, metricFamilyCount, stopwatch.toString()));
+                sink.writeAscii("\n\n# Thanks and come again!\n\n");
+                sink.writeAscii(String.format("# Wrote %s metrics for %s metric families in %s\n", metricCount, metricFamilyCount, stopwatch.toString()));
 
                 state = State.EOF;
                 return;
@@ -358,7 +357,7 @@ public class TextFormatChunkedInput implements ChunkedInput<ByteBuf> {
         // add slices till we hit the chunk size (or slightly over it), or hit EOF
         while (chunkBuffer.readableBytes() < 1024 * 1024 && state != State.EOF) {
             try {
-                nextSlice(chunkBuffer);
+                nextSlice(new NettyExpositionSink(chunkBuffer));
 
             } catch (Exception e) {
                 throw e;
