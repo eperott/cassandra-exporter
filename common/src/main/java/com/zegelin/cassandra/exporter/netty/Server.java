@@ -58,7 +58,8 @@ public class Server {
                     .addLast(new HttpObjectAggregator(1048576))
                     .addLast(new HttpContentCompressor())
                     .addLast(new ChunkedWriteHandler())
-                    .addLast(new HttpHandler(harvester, helpExposition));
+                    .addLast(new HttpHandler(harvester, helpExposition))
+                    .addLast(new SuppressingExceptionHandler());
 
             sslSupport.maybeAddHandler(ch);
         }
